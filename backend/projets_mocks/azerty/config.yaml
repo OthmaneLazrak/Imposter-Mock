@@ -1,6 +1,0 @@
-plugin: soap
-wsdlFile: ServeurLWS.wsdl
-resources:
-- path: /WebService_430/ServeurLWS
-  response:
-    scriptFile: response.groovy
