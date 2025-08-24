@@ -1,0 +1,612 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import subprocess
+from pathlib import Path
+import threading
+import os
+import json
+import shutil
+from datetime import datetime
+
+class MockManagerApp:
+    def __init__(self, root):
+        self.root = root
+        self.base_dir = Path("C:/Users/othmane/Desktop/projets_mocks")
+        self.scripts_dir = Path("C:/Users/othmane/Desktop/script_py")
+        self.running_containers = {}
+        self.setup_ui()
+        self.check_docker_availability()
+        
+    def setup_ui(self):
+        self.root.title("Imposter Mock Manager")
+        self.root.geometry("1000x800")
+        self.root.configure(bg='#f0f0f0')
+        
+        # Style pour ttk
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create tabs
+        self.create_main_tab()
+        self.create_docker_tab()
+        
+        # Status bar
+        self.create_status_bar()
+        
+    def create_main_tab(self):
+        # Main tab frame
+        main_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(main_frame, text="📁 Gestion des Mocks")
+        
+        # Configuration responsive
+        main_frame.columnconfigure(1, weight=1)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="Imposter Mock Manager", 
+                               font=('Arial', 16, 'bold'))
+        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        
+        # WSDL File Section
+        wsdl_frame = ttk.LabelFrame(main_frame, text="Configuration WSDL", padding="10")
+        wsdl_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        wsdl_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(wsdl_frame, text="Fichier WSDL :").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.wsdl_path_var = tk.StringVar()
+        self.wsdl_entry = ttk.Entry(wsdl_frame, textvariable=self.wsdl_path_var, width=50)
+        self.wsdl_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 5))
+        ttk.Button(wsdl_frame, text="Parcourir...", command=self.browse_wsdl).grid(row=0, column=2)
+        
+        # Project Section
+        project_frame = ttk.LabelFrame(main_frame, text="Projet", padding="10")
+        project_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        project_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(project_frame, text="Nom du projet :").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.project_name_var = tk.StringVar()
+        self.project_entry = ttk.Entry(project_frame, textvariable=self.project_name_var, width=30)
+        self.project_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 5))
+        
+        # Project directory info
+        self.project_info_var = tk.StringVar()
+        self.project_info_label = ttk.Label(project_frame, textvariable=self.project_info_var, 
+                                           foreground='gray', font=('Arial', 8))
+        self.project_info_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        
+        # Update project info when name changes
+        self.project_name_var.trace_add('write', self.update_project_info)
+        
+        # Actions Section
+        actions_frame = ttk.LabelFrame(main_frame, text="Actions", padding="10")
+        actions_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Progress bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(actions_frame, variable=self.progress_var, 
+                                          mode='indeterminate')
+        self.progress_bar.grid(row=0, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Buttons
+        self.init_btn = ttk.Button(actions_frame, text="🔧 Initialiser", 
+                                  command=self.run_init_threaded, width=18)
+        self.init_btn.grid(row=1, column=0, padx=(0, 5))
+        
+        self.generate_btn = ttk.Button(actions_frame, text="⚡ Générer", 
+                                      command=self.run_generate_threaded, width=18)
+        self.generate_btn.grid(row=1, column=1, padx=5)
+        
+        self.validate_btn = ttk.Button(actions_frame, text="✅ Valider", 
+                                      command=self.run_validate_threaded, width=18)
+        self.validate_btn.grid(row=1, column=2, padx=5)
+        
+        self.deploy_btn = ttk.Button(actions_frame, text="🚀 Déployer", 
+                                    command=self.deploy_to_docker, width=18)
+        self.deploy_btn.grid(row=1, column=3, padx=(5, 0))
+        
+        # Status
+        self.status_var = tk.StringVar(value="Prêt")
+        self.status_label = ttk.Label(actions_frame, textvariable=self.status_var, 
+                                     foreground='green', font=('Arial', 9))
+        self.status_label.grid(row=2, column=0, columnspan=4, pady=(10, 0))
+        
+        # Output Section
+        output_frame = ttk.LabelFrame(main_frame, text="Sortie", padding="10")
+        output_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        output_frame.columnconfigure(0, weight=1)
+        output_frame.rowconfigure(0, weight=1)
+        main_frame.rowconfigure(4, weight=1)
+        
+        # Text output with scrollbar
+        text_frame = ttk.Frame(output_frame)
+        text_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+        
+        self.output_text = tk.Text(text_frame, height=12, width=80, wrap=tk.WORD,
+                                  font=('Consolas', 9), bg='#1e1e1e', fg='#ffffff',
+                                  insertbackground='white')
+        self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self.output_text.yview)
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.output_text.configure(yscrollcommand=scrollbar.set)
+        
+        # Clear button
+        ttk.Button(output_frame, text="Effacer", command=self.clear_output).grid(row=1, column=0, pady=(10, 0))
+        
+        # Bind Enter key for quick execution
+        self.root.bind('<Return>', lambda e: self.run_generate_threaded())
+        
+    def create_docker_tab(self):
+        # Docker tab frame
+        docker_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(docker_frame, text="🐳 Docker")
+        
+        # Docker configuration
+        config_frame = ttk.LabelFrame(docker_frame, text="Configuration Docker", padding="10")
+        config_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        config_frame.columnconfigure(1, weight=1)
+        
+        # Docker image selection
+        ttk.Label(config_frame, text="Image Docker :").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.docker_image_var = tk.StringVar(value="mountebank:latest")
+        self.image_combo = ttk.Combobox(config_frame, textvariable=self.docker_image_var, 
+                                       values=["mountebank:latest", "mountebank:2.8.2", 
+                                              "wiremock/wiremock:latest", "mockserver/mockserver:latest", 
+                                              "custom"], state="readonly")
+        self.image_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 5))
+        
+        # Custom image entry (hidden by default)
+        self.custom_image_var = tk.StringVar()
+        self.custom_image_entry = ttk.Entry(config_frame, textvariable=self.custom_image_var, 
+                                           state="disabled")
+        self.custom_image_entry.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
+        
+        # Bind image selection change
+        self.image_combo.bind('<<ComboboxSelected>>', self.on_image_selection_change)
+        
+        # Port configuration
+        port_frame = ttk.Frame(config_frame)
+        port_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+        
+        ttk.Label(port_frame, text="Port host :").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.host_port_var = tk.StringVar(value="8080")
+        ttk.Entry(port_frame, textvariable=self.host_port_var, width=10).grid(row=0, column=1, padx=(0, 10))
+        
+        ttk.Label(port_frame, text="Port container :").grid(row=0, column=2, sticky="w", padx=(0, 5))
+        self.container_port_var = tk.StringVar(value="2525")
+        ttk.Entry(port_frame, textvariable=self.container_port_var, width=10).grid(row=0, column=3, padx=(0, 10))
+        
+        # Container name
+        ttk.Label(config_frame, text="Nom conteneur :").grid(row=2, column=0, sticky="w", padx=(0, 5), pady=(10, 0))
+        self.container_name_var = tk.StringVar()
+        ttk.Entry(config_frame, textvariable=self.container_name_var).grid(row=2, column=1, 
+                                                                          sticky=(tk.W, tk.E), pady=(10, 0))
+        
+        # Advanced options
+        advanced_frame = ttk.LabelFrame(docker_frame, text="Options avancées", padding="10")
+        advanced_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Checkboxes
+        self.mount_project_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(advanced_frame, text="Monter le dossier projet", 
+                       variable=self.mount_project_var).grid(row=0, column=0, sticky="w")
+        
+        self.auto_remove_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(advanced_frame, text="Supprimer automatiquement à l'arrêt", 
+                       variable=self.auto_remove_var).grid(row=1, column=0, sticky="w")
+        
+        self.detached_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(advanced_frame, text="Exécuter en arrière-plan", 
+                       variable=self.detached_var).grid(row=2, column=0, sticky="w")
+        
+        # Environment variables
+        env_frame = ttk.Frame(advanced_frame)
+        env_frame.grid(row=0, column=1, rowspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(20, 0))
+        
+        ttk.Label(env_frame, text="Variables d'environnement :").grid(row=0, column=0, sticky="w")
+        self.env_text = tk.Text(env_frame, height=4, width=30, font=('Consolas', 9))
+        self.env_text.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        self.env_text.insert(tk.END, "LOGLEVEL=info\nDEBUG=true")
+        
+        # Docker actions
+        actions_frame = ttk.LabelFrame(docker_frame, text="Actions Docker", padding="10")
+        actions_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Docker buttons
+        self.start_btn = ttk.Button(actions_frame, text="▶️ Démarrer", 
+                                   command=self.start_container, width=15)
+        self.start_btn.grid(row=0, column=0, padx=(0, 5))
+        
+        self.stop_btn = ttk.Button(actions_frame, text="⏹️ Arrêter", 
+                                  command=self.stop_container, width=15)
+        self.stop_btn.grid(row=0, column=1, padx=5)
+        
+        self.restart_btn = ttk.Button(actions_frame, text="🔄 Redémarrer", 
+                                     command=self.restart_container, width=15)
+        self.restart_btn.grid(row=0, column=2, padx=5)
+        
+        self.logs_btn = ttk.Button(actions_frame, text="📋 Logs", 
+                                  command=self.view_logs, width=15)
+        self.logs_btn.grid(row=0, column=3, padx=5)
+        
+        self.status_btn = ttk.Button(actions_frame, text="ℹ️ Status", 
+                                    command=self.check_status, width=15)
+        self.status_btn.grid(row=0, column=4, padx=(5, 0))
+        
+        # Container status display
+        status_frame = ttk.LabelFrame(docker_frame, text="Status des conteneurs", padding="10")
+        status_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        status_frame.columnconfigure(0, weight=1)
+        status_frame.rowconfigure(0, weight=1)
+        docker_frame.rowconfigure(3, weight=1)
+        
+        # Treeview for containers
+        self.containers_tree = ttk.Treeview(status_frame, columns=('status', 'image', 'ports'), 
+                                           show='tree headings', height=8)
+        self.containers_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Configure columns
+        self.containers_tree.heading('#0', text='Nom')
+        self.containers_tree.heading('status', text='Status')
+        self.containers_tree.heading('image', text='Image')
+        self.containers_tree.heading('ports', text='Ports')
+        
+        self.containers_tree.column('#0', width=150)
+        self.containers_tree.column('status', width=100)
+        self.containers_tree.column('image', width=200)
+        self.containers_tree.column('ports', width=150)
+        
+        # Scrollbar for treeview
+        tree_scrollbar = ttk.Scrollbar(status_frame, orient="vertical", 
+                                      command=self.containers_tree.yview)
+        tree_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.containers_tree.configure(yscrollcommand=tree_scrollbar.set)
+        
+        # Refresh button
+        ttk.Button(status_frame, text="🔄 Actualiser", 
+                  command=self.refresh_containers).grid(row=1, column=0, pady=(10, 0))
+        
+    def create_status_bar(self):
+        status_frame = ttk.Frame(self.root)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        self.status_bar_var = tk.StringVar(value=f"Répertoire: {self.base_dir} | Scripts: {self.scripts_dir}")
+        ttk.Label(status_frame, textvariable=self.status_bar_var, 
+                 relief=tk.SUNKEN, anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Docker status indicator
+        self.docker_status_var = tk.StringVar(value="Docker: Vérification...")
+        self.docker_status_label = ttk.Label(status_frame, textvariable=self.docker_status_var,
+                                            relief=tk.SUNKEN, anchor=tk.E)
+        self.docker_status_label.pack(side=tk.RIGHT, padx=(5, 0))
+        
+    def on_image_selection_change(self, event=None):
+        if self.docker_image_var.get() == "custom":
+            self.custom_image_entry.config(state="normal")
+            self.custom_image_entry.focus()
+        else:
+            self.custom_image_entry.config(state="disabled")
+            self.custom_image_var.set("")
+            
+    def check_docker_availability(self):
+        def check():
+            try:
+                result = subprocess.run(["docker", "--version"], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    self.docker_status_var.set("Docker: ✅ Disponible")
+                    self.root.after(0, self.refresh_containers)
+                else:
+                    self.docker_status_var.set("Docker: ❌ Erreur")
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                self.docker_status_var.set("Docker: ❌ Non disponible")
+                
+        threading.Thread(target=check, daemon=True).start()
+        
+    def update_project_info(self, *args):
+        project_name = self.project_name_var.get()
+        if project_name:
+            project_path = self.base_dir / project_name
+            self.project_info_var.set(f"Chemin: {project_path}")
+            # Auto-generate container name
+            if not self.container_name_var.get():
+                self.container_name_var.set(f"mock-{project_name}")
+        else:
+            self.project_info_var.set("")
+            
+    def browse_wsdl(self):
+        filename = filedialog.askopenfilename(
+            title="Sélectionner un fichier WSDL",
+            filetypes=[("Fichiers WSDL", "*.wsdl"), ("Tous les fichiers", "*.*")]
+        )
+        if filename:
+            self.wsdl_path_var.set(filename)
+            
+    def log_message(self, message, level="INFO"):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        color_tag = f"{level.lower()}_tag"
+        
+        # Configure text tags for different log levels
+        if not hasattr(self, 'tags_configured'):
+            self.output_text.tag_configure("info_tag", foreground="#00ff00")
+            self.output_text.tag_configure("error_tag", foreground="#ff4444")
+            self.output_text.tag_configure("warning_tag", foreground="#ffaa00")
+            self.output_text.tag_configure("timestamp_tag", foreground="#888888")
+            self.tags_configured = True
+        
+        self.output_text.insert(tk.END, f"[{timestamp}] ", "timestamp_tag")
+        self.output_text.insert(tk.END, f"{level}: {message}\n", color_tag)
+        self.output_text.see(tk.END)
+        self.root.update_idletasks()
+        
+    def clear_output(self):
+        self.output_text.delete(1.0, tk.END)
+        
+    def set_buttons_state(self, state):
+        self.init_btn.configure(state=state)
+        self.generate_btn.configure(state=state)
+        self.validate_btn.configure(state=state)
+        self.deploy_btn.configure(state=state)
+        
+    def set_docker_buttons_state(self, state):
+        self.start_btn.configure(state=state)
+        self.stop_btn.configure(state=state)
+        self.restart_btn.configure(state=state)
+        self.logs_btn.configure(state=state)
+        self.status_btn.configure(state=state)
+        
+    def run_command(self, cmd, operation_name):
+        try:
+            self.set_buttons_state('disabled')
+            self.progress_bar.start()
+            self.status_var.set(f"Exécution de {operation_name}...")
+            
+            self.log_message(f"Démarrage de {operation_name}")
+            self.log_message(f"Commande: {' '.join(cmd)}")
+            
+            # Change to scripts directory
+            original_dir = os.getcwd()
+            os.chdir(self.scripts_dir)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            os.chdir(original_dir)
+            
+            if result.stdout:
+                self.log_message(result.stdout.strip())
+            if result.stderr:
+                self.log_message(result.stderr.strip(), "ERROR")
+                
+            if result.returncode == 0:
+                self.log_message(f"{operation_name} terminé avec succès")
+                self.status_var.set(f"{operation_name} terminé avec succès")
+            else:
+                self.log_message(f"{operation_name} échoué (code: {result.returncode})", "ERROR")
+                self.status_var.set(f"{operation_name} échoué")
+                
+        except subprocess.TimeoutExpired:
+            self.log_message(f"Timeout: {operation_name} a pris trop de temps", "ERROR")
+            self.status_var.set(f"Timeout: {operation_name}")
+        except Exception as e:
+            self.log_message(f"Erreur lors de {operation_name}: {str(e)}", "ERROR")
+            self.status_var.set(f"Erreur: {operation_name}")
+        finally:
+            self.progress_bar.stop()
+            self.set_buttons_state('normal')
+            
+    def run_docker_command(self, cmd, operation_name):
+        try:
+            self.set_docker_buttons_state('disabled')
+            self.log_message(f"Docker: Démarrage de {operation_name}")
+            self.log_message(f"Commande: {' '.join(cmd)}")
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            if result.stdout:
+                self.log_message(result.stdout.strip())
+            if result.stderr:
+                self.log_message(result.stderr.strip(), "ERROR")
+                
+            if result.returncode == 0:
+                self.log_message(f"Docker: {operation_name} terminé avec succès")
+                self.refresh_containers()
+            else:
+                self.log_message(f"Docker: {operation_name} échoué (code: {result.returncode})", "ERROR")
+                
+        except subprocess.TimeoutExpired:
+            self.log_message(f"Docker: Timeout lors de {operation_name}", "ERROR")
+        except Exception as e:
+            self.log_message(f"Docker: Erreur lors de {operation_name}: {str(e)}", "ERROR")
+        finally:
+            self.set_docker_buttons_state('normal')
+            
+    def validate_inputs(self, require_wsdl=True):
+        wsdl = self.wsdl_path_var.get().strip()
+        project = self.project_name_var.get().strip()
+        
+        if require_wsdl and not wsdl:
+            messagebox.showerror("Erreur", "Le chemin du fichier WSDL est obligatoire.")
+            return False
+            
+        if not project:
+            messagebox.showerror("Erreur", "Le nom du projet est obligatoire.")
+            return False
+            
+        if require_wsdl and not Path(wsdl).exists():
+            messagebox.showerror("Erreur", f"Le fichier WSDL '{wsdl}' n'existe pas.")
+            return False
+            
+        # Vérifier que le dossier scripts existe
+        if not self.scripts_dir.exists():
+            messagebox.showerror("Erreur", f"Le dossier scripts '{self.scripts_dir}' n'existe pas.")
+            return False
+            
+        return True
+        
+    def validate_docker_inputs(self):
+        container_name = self.container_name_var.get().strip()
+        if not container_name:
+            messagebox.showerror("Erreur", "Le nom du conteneur est obligatoire.")
+            return False
+            
+        try:
+            host_port = int(self.host_port_var.get())
+            container_port = int(self.container_port_var.get())
+            if not (1 <= host_port <= 65535) or not (1 <= container_port <= 65535):
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Erreur", "Les ports doivent être des nombres entre 1 et 65535.")
+            return False
+            
+        return True
+        
+    def get_docker_image(self):
+        if self.docker_image_var.get() == "custom":
+            return self.custom_image_var.get().strip()
+        return self.docker_image_var.get()
+        
+    def build_docker_command(self, action):
+        container_name = self.container_name_var.get().strip()
+        image = self.get_docker_image()
+        
+        if action == "run":
+            cmd = ["docker", "run"]
+            
+            if self.detached_var.get():
+                cmd.append("-d")
+            
+            if self.auto_remove_var.get():
+                cmd.append("--rm")
+                
+            cmd.extend(["--name", container_name])
+            cmd.extend(["-p", f"{self.host_port_var.get()}:{self.container_port_var.get()}"])
+            
+            # Mount project directory
+            if self.mount_project_var.get():
+                project_path = self.base_dir / self.project_name_var.get()
+                cmd.extend(["-v", f"{project_path}:/data"])
+            
+            # Environment variables
+            env_vars = self.env_text.get(1.0, tk.END).strip()
+            for line in env_vars.split('\n'):
+                if '=' in line:
+                    cmd.extend(["-e", line.strip()])
+            
+            cmd.append(image)
+            
+        elif action == "stop":
+            cmd = ["docker", "stop", container_name]
+        elif action == "start":
+            cmd = ["docker", "start", container_name]
+        elif action == "restart":
+            cmd = ["docker", "restart", container_name]
+        elif action == "logs":
+            cmd = ["docker", "logs", container_name]
+        elif action == "ps":
+            cmd = ["docker", "ps", "-a", "--format", "json"]
+            
+        return cmd
+        
+    def run_init_threaded(self):
+        if not self.validate_inputs(require_wsdl=True):
+            return
+            
+        def run_init():
+            wsdl = self.wsdl_path_var.get()
+            project = self.project_name_var.get()
+            cmd = ["python", "init.py", f"--wsdl={wsdl}", f"--output-dir={self.base_dir / project}"]
+            self.run_command(cmd, "Initialisation")
+            
+        threading.Thread(target=run_init, daemon=True).start()
+        
+    def run_generate_threaded(self):
+        if not self.validate_inputs(require_wsdl=False):
+            return
+            
+        def run_generate():
+            project = self.project_name_var.get()
+            cmd = ["python", "generate.py", f"--project={self.base_dir / project}"]
+            self.run_command(cmd, "Génération")
+            
+        threading.Thread(target=run_generate, daemon=True).start()
+        
+    def run_validate_threaded(self):
+        if not self.validate_inputs(require_wsdl=False):
+            return
+            
+        def run_validate():
+            project = self.project_name_var.get()
+            cmd = ["python", "validate.py", f"--project={self.base_dir / project}"]
+            self.run_command(cmd, "Validation")
+            
+        threading.Thread(target=run_validate, daemon=True).start()
+        
+    def deploy_to_docker(self):
+        if not self.validate_inputs(require_wsdl=False):
+            return
+        if not self.validate_docker_inputs():
+            return
+            
+        # Switch to Docker tab
+        self.notebook.select(1)
+        
+        # Start container
+        self.start_container()
+    def start_container(self):
+        if not self.validate_docker_inputs():
+            return
+
+        cmd = self.build_docker_command("run")
+        threading.Thread(target=lambda: self.run_docker_command(cmd, "Démarrage du conteneur"), daemon=True).start()
+
+    def stop_container(self):
+        if not self.validate_docker_inputs():
+            return
+
+        cmd = self.build_docker_command("stop")
+        threading.Thread(target=lambda: self.run_docker_command(cmd, "Arrêt du conteneur"), daemon=True).start()
+
+    def restart_container(self):
+        if not self.validate_docker_inputs():
+            return
+
+        cmd = self.build_docker_command("restart")
+        threading.Thread(target=lambda: self.run_docker_command(cmd, "Redémarrage du conteneur"), daemon=True).start()
+
+    def view_logs(self):
+        if not self.validate_docker_inputs():
+            return
+
+        cmd = self.build_docker_command("logs")
+        threading.Thread(target=lambda: self.run_docker_command(cmd, "Logs du conteneur"), daemon=True).start()
+
+    def check_status(self):
+        self.refresh_containers()
+
+    def refresh_containers(self):
+        try:
+            result = subprocess.run(["docker", "ps", "--format", "{{json .}}"], capture_output=True, text=True)
+            self.containers_tree.delete(*self.containers_tree.get_children())
+            for line in result.stdout.strip().splitlines():
+                try:
+                    data = json.loads(line)
+                    name = data.get("Names", "")
+                    status = data.get("Status", "")
+                    image = data.get("Image", "")
+                    ports = data.get("Ports", "")
+                    self.containers_tree.insert('', 'end', text=name, values=(status, image, ports))
+                except json.JSONDecodeError:
+                    continue
+        except Exception as e:
+            self.log_message(f"Erreur lors de la récupération des conteneurs: {e}", "ERROR")
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = MockManagerApp(root)
+    root.mainloop()
