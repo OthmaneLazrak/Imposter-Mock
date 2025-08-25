@@ -89,9 +89,17 @@ def start_container(project_name: str):
         return
 
     # IMPORTANT : Dans le conteneur, on monte /projects, mais Docker a besoin du chemin HOST
-    # Le chemin host est récupéré via une variable d'environnement ou calculé
-    host_base_dir = os.getenv("HOST_PROJECTS_DIR", "/home/othmane/Bureau/mockImposter/projects")
+    # Le chemin host est récupéré via une variable d'environnement (OBLIGATOIRE)
+    host_base_dir = os.getenv("HOST_PROJECTS_DIR")
+
+    if not host_base_dir:
+        print("❌ La variable d'environnement HOST_PROJECTS_DIR n'est pas définie")
+        print("💡 Définissez HOST_PROJECTS_DIR avec le chemin absolu vers vos projets sur la machine host")
+        print("   Exemple: -e HOST_PROJECTS_DIR=/home/user/mockImposter/projects")
+        return
+
     docker_project_path = f"{host_base_dir}/{project_name}"
+    print(f"🔗 Chemin host utilisé : {docker_project_path}")
 
     # Vérifier si le conteneur existe déjà
     result = subprocess.run(
