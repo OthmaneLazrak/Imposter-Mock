@@ -5,6 +5,8 @@ import yaml
 from lxml import etree
 from urllib.parse import urlparse
 import shutil
+from typing import Optional  # ✅ ajouté
+
 
 app = typer.Typer()
 
@@ -17,7 +19,7 @@ def get_base_dir() -> Path:
 
 BASE_DIR = get_base_dir()
 
-def init_project(project_path: Path, wsdl_path: Path, xsd_path: Path | None = None):
+def init_project(project_path: Path, wsdl_path: Path, xsd_path: Optional[Path] = None):  # ✅ corrigé
     project_path.mkdir(parents=True, exist_ok=True)
     wsdl_dest = project_path / wsdl_path.name
     shutil.copy2(wsdl_path, wsdl_dest)

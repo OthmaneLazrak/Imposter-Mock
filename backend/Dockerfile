@@ -1,14 +1,26 @@
-# Backend - Spring Boot + Python
+# Backend - Spring Boot + Python + Docker CLI
 FROM openjdk:17-jdk-slim
 
-# Installer Python
+# Installer Python, dépendances système et Docker CLI
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
     build-essential \
     curl \
+    apt-transport-https \
+    ca-certificates \
+    gnupg \
+    lsb-release \
     && rm -rf /var/lib/apt/lists/*
+
+# Installer Docker CLI
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Créer un alias python/pip
 RUN ln -sf /usr/bin/python3 /usr/bin/python && \
@@ -26,6 +38,10 @@ COPY src/main/resources/application-docker.properties /app/config/application.pr
 # Copier les scripts Python
 COPY script_py/ ./script_py/
 
+# Copier requirements.txt et installer dépendances Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 # Rendre les scripts exécutables
 RUN chmod +x ./script_py/*.py || true
 
@@ -39,5 +55,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Variable d'environnement pour localiser les scripts
 ENV PYTHONPATH=/app/script_py
 
-# Lancer l’application
+# Lancer l'application
 ENTRYPOINT ["java", "-jar", "app.jar", "--spring.config.location=file:/app/config/application.properties"]
