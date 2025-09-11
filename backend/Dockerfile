@@ -32,8 +32,8 @@ WORKDIR /app
 # Copier le JAR généré par Maven/Gradle
 COPY target/*.jar app.jar
 
-# Copier la config Spring Boot
-COPY src/main/resources/application-docker.properties /app/config/application.properties
+# CORRECTION: Copier la bonne configuration
+COPY src/main/resources/application.properties /app/config/application.properties
 
 # Copier les scripts Python
 COPY script_py/ ./script_py/
@@ -48,12 +48,13 @@ RUN chmod +x ./script_py/*.py || true
 # Exposer le port du backend
 EXPOSE 8086
 
-# Point de santé
+# Point de santé (adapté pour H2)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8086/actuator/health || exit 1
 
-# Variable d'environnement pour localiser les scripts
+# Variable d'environnement
 ENV PYTHONPATH=/app/script_py
+ENV SPRING_PROFILES_ACTIVE=docker
 
-# Lancer l'application
-ENTRYPOINT ["java", "-jar", "app.jar", "--spring.config.location=file:/app/config/application.properties"]
+# Lancer l'application avec le profil docker
+ENTRYPOINT ["java", "-jar", "app.jar"]

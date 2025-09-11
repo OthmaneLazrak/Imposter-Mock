@@ -143,13 +143,6 @@ public class MockProjectService {
             logger.severe("[generate.py] Erreur : " + e.getMessage());
         }
 
-        // 🚀 Lancer conteneur docker
-        try {
-            startDockerContainer(projectName);
-        } catch (Exception e) {
-            logger.severe("[docker_control.py] Impossible de démarrer conteneur : " + e.getMessage());
-        }
-
         return savedProject;
     }
 

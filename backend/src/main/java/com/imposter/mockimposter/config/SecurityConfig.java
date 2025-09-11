@@ -35,12 +35,21 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .csrf(csrf -> csrf.disable())
+                .csrf(csrf -> csrf
+                                .disable() // Désactiver CSRF pour H2 Console
+                        // Ou seulement pour H2 Console :
+                        // .ignoringRequestMatchers("/h2-console/**")
+                )
+                .headers(headers -> headers
+                        .frameOptions(frameOptions -> frameOptions.disable()) // Nouvelle syntaxe
+                        .contentTypeOptions(contentType -> contentType.disable())
+                )
                 .authorizeHttpRequests(auth -> auth
+                        // Permettre l'accès à H2 Console
+                        .requestMatchers("/h2-console/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/projects/**").authenticated()
                         .requestMatchers("/api/docker/**").authenticated()
-
                         .anyRequest().authenticated()
                 )
                 // Configuration des sessions - CRUCIAL
